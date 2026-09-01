@@ -1,0 +1,135 @@
+name: Build Release (unzip-and-overwrite)
+
+# 工作流说明
+# ============================================================
+# 本工作流采用 "unzip-and-overwrite" 式集成：
+#   1. checkout 仓库中的原版代码（base）
+#   2. 下载增量包 Word-Formatter-Pro.patch.<tag>.zip（可在仓库 Release 中上传，
+#      或通过 workflow_dispatch 手动输入 URL）
+#   3. 解压增量包并覆盖到源码树，得到完整的最新代码
+#   4. 安装依赖 -> PyInstaller 构建 -> 上传构建产物
+# ============================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      patch_url:
+        description: "增量包 zip 下载地址（留空则使用仓库 Release 中最新 patch）"
+        required: false
+        type: string
+      build_target:
+        description: "构建目标平台"
+        required: true
+        default: "windows"
+        type: choice
+        options:
+          - windows
+          - linux
+          - both
+  push:
+    branches: [main, master]
+  release:
+    types: [published]
+
+jobs:
+  build:
+    # GitHub 公开仓库标准托管 runner（免费额度）最高规格：
+    #   ubuntu-latest / windows-latest 均为 4 vCPU + 16 GB RAM
+    # 更大规格（如 8 vCPU）属于付费 larger runner，公开仓库默认不可用。
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    env:
+      PYTHON_VERSION: "3.11"
+
+    steps:
+      - name: Checkout base source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Determine patch zip URL
+        id: patch
+        shell: bash
+        run: |
+          # 优先使用手动输入的 URL
+          INPUT_URL="${{ github.event.inputs.patch_url }}"
+          if [ -n "$INPUT_URL" ]; then
+            echo "patch_url=$INPUT_URL" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 否则尝试从仓库 Release 中查找最新的 *patch*.zip 资产
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest"
+          URL=$(curl -fsSL "$API" | python -c "
+import json,sys
+try:
+    data=json.load(sys.stdin)
+    for a in data.get('assets', []):
+        if a['name'].startswith('Word-Formatter-Pro.patch.') and a['name'].endswith('.zip'):
+            print(a['browser_download_url']); break
+except Exception:
+    pass
+" 2>/dev/null || true)
+          if [ -z "$URL" ]; then
+            echo "::error::未找到增量包：请在 Release 上传 Word-Formatter-Pro.patch.<tag>.zip，或通过 workflow_dispatch 输入 patch_url"
+            exit 1
+          fi
+          echo "patch_url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Download and unzip patch (overwrite source)
+        shell: bash
+        run: |
+          echo "patch_url: ${{ steps.patch.outputs.patch_url }}"
+          curl -fsSL "${{ steps.patch.outputs.patch_url }}" -o patch.zip
+          python -c "import zipfile; zipfile.ZipFile('patch.zip').extractall('.')"
+          echo "--- 解压后源码树 .py 文件 ---"
+          ls -1 *.py
+
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install system Tk (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk libglib2.0-0
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Sanity check imports
+        run: python -c "
+import wfp_core, wfp_config, wfp_gui
+import wfp_pdf_tools, wfp_template_tools, wfp_pdf_editor
+print('imports OK; version', __import__('wfp_version').__version__)
+"
+
+      - name: Build Windows EXE (PyInstaller)
+        if: runner.os == 'Windows'
+        run: |
+          python packaging/build_release.py windows --force
+
+      - name: Build Linux binary (PyInstaller, no AppImage)
+        if: runner.os == 'Linux'
+        run: |
+          python packaging/build_release.py kylin --force --no-appimage
+
+      - name: Upload Windows artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Word-Formatter-Pro-windows-${{ github.sha }}
+          path: release/*.exe
+
+      - name: Upload Linux artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Word-Formatter-Pro-linux-${{ github.sha }}
+          path: release/Word-Formatter-Pro.v*.*
