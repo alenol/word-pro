@@ -33,9 +33,8 @@ on:
 
 jobs:
   build:
-    # GitHub 公开仓库标准托管 runner（免费额度）最高规格：
-    #   ubuntu-latest / windows-latest 均为 4 vCPU + 16 GB RAM
-    # 更大规格（如 8 vCPU）属于付费 larger runner，公开仓库默认不可用。
+    # GitHub 标准托管 runner 规格：
+    #   ubuntu-latest / windows-latest 均为 2 vCPU + 7 GB RAM
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
