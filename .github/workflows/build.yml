@@ -4,8 +4,8 @@ name: Build Release (unzip-and-overwrite)
 # ============================================================
 # 本工作流采用 "unzip-and-overwrite" 式集成：
 #   1. checkout 仓库中的原版代码（base）
-#   2. 下载增量包 Word-Formatter-Pro.patch.<tag>.zip（可在仓库 Release 中上传，
-#      或通过 workflow_dispatch 手动输入 URL）
+#   2. 从仓库 patch/ 目录下载增量包 Word-Formatter-Pro.patch.<tag>.zip
+#      （也可通过 workflow_dispatch 手动输入 URL）
 #   3. 解压增量包并覆盖到源码树，得到完整的最新代码
 #   4. 安装依赖 -> PyInstaller 构建 -> 上传构建产物
 # ============================================================
@@ -60,22 +60,23 @@ jobs:
             echo "patch_url=$INPUT_URL" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # 否则尝试从仓库 Release 中查找最新的 *patch*.zip 资产
-          API="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest"
-          URL=$(curl -fsSL "$API" | python -c "
+          # 否则从仓库 patch/ 目录中查找最新的 *patch*.zip
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}/contents/patch"
+          NAME=$(curl -fsSL "$API" | python -c "
 import json,sys
 try:
     data=json.load(sys.stdin)
-    for a in data.get('assets', []):
-        if a['name'].startswith('Word-Formatter-Pro.patch.') and a['name'].endswith('.zip'):
-            print(a['browser_download_url']); break
+    names=[f['name'] for f in data if f['name'].startswith('Word-Formatter-Pro.patch.') and f['name'].endswith('.zip')]
+    if names:
+        print(sorted(names)[-1])
 except Exception:
     pass
 " 2>/dev/null || true)
-          if [ -z "$URL" ]; then
-            echo "::error::未找到增量包：请在 Release 上传 Word-Formatter-Pro.patch.<tag>.zip，或通过 workflow_dispatch 输入 patch_url"
+          if [ -z "$NAME" ]; then
+            echo "::error::未找到增量包：请在仓库 patch/ 目录上传 Word-Formatter-Pro.patch.<tag>.zip，或通过 workflow_dispatch 输入 patch_url"
             exit 1
           fi
+          URL="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${{ github.ref_name }}/patch/$NAME"
           echo "patch_url=$URL" >> "$GITHUB_OUTPUT"
 
       - name: Download and unzip patch (overwrite source)
