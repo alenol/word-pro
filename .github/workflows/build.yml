@@ -33,8 +33,9 @@ on:
 
 jobs:
   build:
-    # GitHub 标准托管 runner 规格：
-    #   ubuntu-latest / windows-latest 均为 2 vCPU + 7 GB RAM
+    # GitHub 公开仓库标准托管 runner（免费额度）最高规格：
+    #   ubuntu-latest / windows-latest 均为 4 vCPU + 16 GB RAM
+    # 更大规格（如 8 vCPU）属于付费 larger runner，公开仓库默认不可用。
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -61,16 +62,7 @@ jobs:
           fi
           # 否则从仓库 patch/ 目录中查找最新的 *patch*.zip
           API="https://api.github.com/repos/${GITHUB_REPOSITORY}/contents/patch"
-          NAME=$(curl -fsSL "$API" | python -c "
-import json,sys
-try:
-    data=json.load(sys.stdin)
-    names=[f['name'] for f in data if f['name'].startswith('Word-Formatter-Pro.patch.') and f['name'].endswith('.zip')]
-    if names:
-        print(sorted(names)[-1])
-except Exception:
-    pass
-" 2>/dev/null || true)
+          NAME=$(curl -fsSL "$API" | grep -o '"name": *"Word-Formatter-Pro\.patch\.[^"]*\.zip"' | sed 's/.*"\(Word-Formatter-Pro\.patch\.[^"]*\.zip\)"/\1/' | sort -V | tail -n 1)
           if [ -z "$NAME" ]; then
             echo "::error::未找到增量包：请在仓库 patch/ 目录上传 Word-Formatter-Pro.patch.<tag>.zip，或通过 workflow_dispatch 输入 patch_url"
             exit 1
@@ -104,11 +96,7 @@ except Exception:
           python -m pip install -r requirements.txt
 
       - name: Sanity check imports
-        run: python -c "
-import wfp_core, wfp_config, wfp_gui
-import wfp_pdf_tools, wfp_template_tools, wfp_pdf_editor
-print('imports OK; version', __import__('wfp_version').__version__)
-"
+        run: python -c "import wfp_core, wfp_config, wfp_gui, wfp_pdf_tools, wfp_template_tools, wfp_pdf_editor; import wfp_version; print('imports OK; version', wfp_version.__version__)"
 
       - name: Build Windows EXE (PyInstaller)
         if: runner.os == 'Windows'
